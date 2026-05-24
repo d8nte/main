@@ -11,11 +11,11 @@ end
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Window = Rayfield:CreateWindow({
-   Name = "D8nte's Hub",
-   LoadingTitle = "Loading UI",
-   LoadingSubtitle = "Enjoy!",
+   Name = "Indo Voice Hub",
+   LoadingTitle = "By D8nte",
+   LoadingSubtitle = "Made with Love, Enjoy!",
    ConfigurationSaving = {
-      Enabled = false, -- Dimatikan, kita pakai sistem profile sendiri
+      Enabled = false,
    },
    Discord = {
       Enabled = false
@@ -48,7 +48,7 @@ end)
 
 local Config = {
     CAST_HOLD_DURATION   = 0.7,
-    POST_PULL_DELAY      = 1.8,   -- Delay setelah pull terdeteksi sebelum catch
+    POST_PULL_DELAY      = 1.8,  
     PRE_END_DELAY        = 0.0,
     POST_END_DELAY       = 0.3,
     PRE_CAST_DELAY       = 0.3,
@@ -67,7 +67,6 @@ local isProfileLoading = false
 local profileLocked = true
 local configWarningShown = false
 
--- Pastikan folder ada
 if not isfolder(PROFILE_FOLDER) then
     makefolder(PROFILE_FOLDER)
 end
@@ -77,7 +76,6 @@ local function profilePath(name)
 end
 
 local function encodeConfig(cfg)
-    -- Serialisasi manual JSON sederhana (tanpa library)
     local parts = {}
     for k, v in pairs(cfg) do
         table.insert(parts, '"' .. k .. '":' .. tostring(v))
@@ -97,7 +95,6 @@ local function listProfiles()
     local files = {}
     if isfolder(PROFILE_FOLDER) then
         for _, f in ipairs(listfiles(PROFILE_FOLDER)) do
-            -- Ambil nama file tanpa path dan tanpa ekstensi
             local name = f:match("([^/\\]+)%.json$")
             if name then
                 table.insert(files, name)
@@ -165,7 +162,6 @@ local function deleteProfile(name)
     end
 end
 
--- Simpan default kalau belum ada
 if not isfile(profilePath("default")) then
     saveProfile("default")
 end
@@ -192,7 +188,6 @@ local isPullDetected       = false
 local totalFishCaught      = 0
 local timeoutCount         = 0
 
--- Timeout per stage
 local timeoutPerStage = {
     ["Verify Cast"]    = 0,
     ["Waiting Pull"]   = 0,
@@ -201,7 +196,7 @@ local timeoutPerStage = {
 }
 
 -- Keybind
-local fishingKeybind = Enum.KeyCode.Unknown -- default: tidak ada
+local fishingKeybind = Enum.KeyCode.Unknown
 
 -- ============================================
 -- Tabs
@@ -217,6 +212,7 @@ local UnloadTab  = Window:CreateTab("Unload")
 -- Info Tab Labels
 -- ============================================
 
+local VersionLabel = MainTab:CreateLabel("Version: 1.1.0")
 local LabelRod        = MainTab:CreateLabel("Rod: -")
 local LabelStage      = MainTab:CreateLabel("Stage: [Idle]")
 local LabelCaught     = MainTab:CreateLabel("Caught: 0")
@@ -410,8 +406,6 @@ ProfileTab:CreateButton({
         if loadProfile(name) then
             updateActiveProfUI()
             setStatus("📂 Loaded profile '" .. name .. "'")
-            -- Rayfield slider tidak bisa di-set ulang secara programatik via API publik,
-            -- tapi Config sudah diupdate — nilai aktif di bot langsung berubah.
             Rayfield:Notify({
                 Title    = "Profile Loaded",
                 Content  = "Profile '" .. name .. "' berhasil dimuat.\nConfig aktif sudah diperbarui.",
@@ -450,7 +444,6 @@ ProfileTab:CreateButton({
 
         if profileLocked then return end
 
-        -- Sama seperti Load, tapi dengan feedback yang jelas bahwa ini "choose"
         local name = currentInputName:match("^%s*(.-)%s*$")
         if name == "" then
             local profiles = listProfiles()
@@ -512,7 +505,6 @@ ProfileTab:CreateLabel("💡 Ketik nama di input → klik tombol.")
 
 local equipDebounce = false
 
--- Cek apakah rod sudah terpasang di karakter
 local function getCurrentRod()
     local char = LocalPlayer.Character
     if not char then return nil end
@@ -524,7 +516,6 @@ local function getCurrentRod()
     return nil
 end
 
--- Ambil rod dari backpack (apapun yang ada)
 local function getRodFromBackpack()
     local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
     if not backpack then return nil end
@@ -536,7 +527,6 @@ local function getRodFromBackpack()
     return nil
 end
 
--- Equip rod: kalau sudah ada di tangan skip, kalau belum ambil dari backpack
 local function equipRod()
     if equipDebounce then return end
     equipDebounce = true
@@ -548,7 +538,6 @@ local function equipRod()
     end
 
     if getCurrentRod() then
-        -- Rod sudah terpasang, tidak perlu apa-apa
         equipDebounce = false
         return
     end
@@ -565,7 +554,6 @@ local function equipRod()
     equipDebounce = false
 end
 
--- Unequip → equip ulang (untuk timeout reset)
 local function reequipRod()
     local char = LocalPlayer.Character
     if not char then return end
@@ -595,22 +583,18 @@ local function timeoutReset(stageName)
     updateTimeoutUI()
     warn("[TIMEOUT] Stage '" .. stageName .. "' → unequip & re-equip rod. Total: " .. timeoutCount)
 
-    -- Bersihkan koneksi animasi
     if activeAnimationConnection then
         activeAnimationConnection:Disconnect()
         activeAnimationConnection = nil
     end
 
-    -- Lepas klik mouse kalau masih nahan
     VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
 
-    -- Reset state fishing
     currentStage        = "Idle"
     stageProgressTime   = 0
     isCastVerified      = false
     isPullDetected      = false
 
-    -- Unequip & re-equip rod di background (biar engine bisa lanjut dari Idle)
     task.spawn(reequipRod)
 end
 
@@ -881,7 +865,6 @@ SecondTab:CreateButton({
     end,
 })
 
--- State toggle Auto Fishing (dipakai juga oleh keybind)
 local autoFishingToggleRef = nil
 local isListeningKeybind   = false
 
@@ -930,8 +913,6 @@ SecondTab:CreateButton({
             keybindLabelFishing:Set("Keybind: " .. keyName)
             updateKeybindLabel()
 
-            -- Delay sebelum isListeningKeybind = false
-            -- supaya global listener skip keypress ini dulu
             task.delay(0.1, function()
                 isListeningKeybind = false
             end)
@@ -948,7 +929,6 @@ SecondTab:CreateButton({
     end,
 })
 
--- Listener keybind global
 game:GetService("UserInputService").InputBegan:Connect(function(input, gpe)
     if gpe then return end
     if isListeningKeybind then return end
@@ -956,7 +936,6 @@ game:GetService("UserInputService").InputBegan:Connect(function(input, gpe)
     if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
     if input.KeyCode ~= fishingKeybind then return end
 
-    -- Toggle Auto Fishing
     local newVal = not isBotRunning
     setAutoFishing(newVal)
     if autoFishingToggleRef then
@@ -965,7 +944,6 @@ game:GetService("UserInputService").InputBegan:Connect(function(input, gpe)
     print("[KEYBIND] Auto Fishing toggled → " .. tostring(newVal))
 end)
 
--- Toggle: Auto Equip (standalone, jalan terus)
 SecondTab:CreateToggle({
     Name         = "Auto Equip Rod",
     CurrentValue = false,
@@ -979,7 +957,6 @@ SecondTab:CreateToggle({
     end,
 })
 
--- Toggle: Auto Equip hanya saat Auto Fishing nyala
 SecondTab:CreateToggle({
     Name         = "Auto Equip (saat Auto Fishing nyala)",
     CurrentValue = false,
@@ -1029,7 +1006,6 @@ UnloadTab:CreateButton({
 
 _G.FishingBotInstance = unloadAllScriptProcesses
 
--- Jalankan auto equip loop sekali saat script load
 startAutoEquipLoop()
 
 -- ============================================
