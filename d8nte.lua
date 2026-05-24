@@ -212,14 +212,14 @@ local UnloadTab  = Window:CreateTab("Unload")
 -- Info Tab Labels
 -- ============================================
 
-local VersionLabel = MainTab:CreateLabel("Version: 1.1.0")
 local LabelRod        = MainTab:CreateLabel("Rod: -")
 local LabelStage      = MainTab:CreateLabel("Stage: [Idle]")
 local LabelCaught     = MainTab:CreateLabel("Caught: 0")
 local LabelActiveProf = MainTab:CreateLabel("Profile: default")
-local LabelKeybind    = MainTab:CreateLabel("Keybind: (none)")
+local LabelKeybind    = SecondTab:CreateLabel("Keybind: (none)")
 local LabelTOVerify   = MainTab:CreateLabel("  Cast: 0  Pull: 0  PostPull: 0  Catch: 0")
 local LabelTimeout    = MainTab:CreateLabel("  Total: 0")
+local VersionLabel    = MainTab:CreateLabel("Version: 1.1.0")   
 MainTab:CreateLabel("Timeouts:")
 ConfigTab:CreateLabel("                                                        ⚠️ WARNING!!")
 ConfigTab:CreateLabel("Config sudah optimal, Jangan ubah config jika anda tidak tau masing masing fungsinya karna bisa menyebabkan kick/ban!")
