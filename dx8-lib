@@ -1,0 +1,861 @@
+-- ============================================================
+--  DX8Library.lua
+--  UI Library Framework - DX8 Style
+--  Cara pakai:
+--    local DX8 = loadstring(game:HttpGet("...DX8Library.lua"))()
+--    local win = DX8:CreateWindow({ Name = "My Script" })
+--    local tab = win:CreateTab("Main", "Home")
+--    local sec = tab:AddSection("Settings")
+--    sec:AddButton("Click Me", function() print("clicked") end)
+--    sec:AddToggle("Enable", false, function(val) print(val) end)
+--    sec:AddLabel("Hello World")
+--    sec:AddSeparator()
+-- ============================================================
+
+-- ============================================================
+-- SERVICES
+-- ============================================================
+local Players        = game:GetService("Players")
+local RunService     = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui        = game:GetService("CoreGui")
+local TweenService   = game:GetService("TweenService")
+
+local LocalPlayer    = Players.LocalPlayer
+
+-- ============================================================
+-- THEME
+-- ============================================================
+local THEME = {
+    BgMain       = Color3.fromRGB(32,  38,  50),
+    BgPanel      = Color3.fromRGB(44,  53,  70),
+    BgPanelDark  = Color3.fromRGB(26,  32,  43),
+    Accent       = Color3.fromRGB(150, 211, 246),
+    AccentSoft   = Color3.fromRGB(118, 178, 224),
+    TextOnAccent = Color3.fromRGB(18,  32,  46),
+    TextPrimary  = Color3.fromRGB(232, 244, 250),
+    TextMuted    = Color3.fromRGB(160, 182, 204),
+    TextDim      = Color3.fromRGB(112, 134, 156),
+    Border       = Color3.fromRGB(68,  90,  116),
+}
+
+-- ============================================================
+-- BUILT-IN ICON MAP  (pakai string key di CreateTab)
+-- ============================================================
+local ICONS = {
+    Home       = "rbxasset://textures/ui/Settings/MenuBarIcons/GameSettingsTab.png",
+    Favorite   = "rbxasset://textures/ui/MyFeed/icon_favorite_on_2x.png",
+    Teleport   = "rbxasset://textures/ui/Settings/MenuBarIcons/PlayersTab.png",
+    Shop       = "rbxasset://textures/ui/PurchasePrompt/RobuxIcon.png",
+    Automation = "rbxasset://textures/ui/Settings/MenuBarIcons/ReportTab.png",
+    Events     = "rbxasset://textures/ui/Settings/MenuBarIcons/HelpTab.png",
+}
+
+-- ============================================================
+-- INTERNAL HELPERS
+-- ============================================================
+local function Tween(obj, t, props)
+    TweenService:Create(obj, TweenInfo.new(t), props):Play()
+end
+
+local function MakeCorner(parent, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or 5)
+    c.Parent = parent
+    return c
+end
+
+local function MakeStroke(parent, color, thickness, transparency)
+    local s = Instance.new("UIStroke")
+    s.Color        = color or THEME.Border
+    s.Thickness    = thickness or 1
+    s.Transparency = transparency or 0
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent       = parent
+    return s
+end
+
+-- ============================================================
+-- DRAG HANDLER
+-- ============================================================
+local function EnableDrag(frame, onTap)
+    -- onTap: callback dipanggil jika user klik tanpa drag (opsional)
+    local dragging, dragStart, startPos, didDrag = false, nil, nil, false
+
+    local inputBegan = frame.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            dragging  = true
+            didDrag   = false
+            dragStart = inp.Position
+            startPos  = frame.Position
+        end
+    end)
+
+    local inputChanged = UserInputService.InputChanged:Connect(function(inp)
+        if not dragging then return end
+        if inp.UserInputType == Enum.UserInputType.MouseMovement
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            local delta = inp.Position - dragStart
+            if delta.Magnitude > 6 then didDrag = true end
+            frame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    local inputEnded = UserInputService.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1
+        or inp.UserInputType == Enum.UserInputType.Touch then
+            if dragging and not didDrag and onTap then
+                onTap()
+            end
+            dragging = false
+        end
+    end)
+
+    -- Bersihkan koneksi saat frame dihancurkan
+    frame.Destroying:Once(function()
+        inputBegan:Disconnect()
+        inputChanged:Disconnect()
+        inputEnded:Disconnect()
+    end)
+end
+
+-- ============================================================
+-- CURSOR BYPASS (paksa cursor tetap terlihat & bebas)
+-- ============================================================
+local BYPASS_KEY = "DX8_CursorBypass"
+
+local function StartCursorBypass(mainFrame)
+    RunService:BindToRenderStep(BYPASS_KEY, Enum.RenderPriority.Last.Value, function()
+        if mainFrame and mainFrame.Visible then
+            UserInputService.MouseBehavior  = Enum.MouseBehavior.Default
+            UserInputService.MouseIconEnabled = true
+        end
+    end)
+end
+
+local function StopCursorBypass()
+    RunService:UnbindFromRenderStep(BYPASS_KEY)
+    UserInputService.MouseIconEnabled = true
+    UserInputService.MouseBehavior    = Enum.MouseBehavior.Default
+end
+
+-- ============================================================
+-- LIBRARY TABLE
+-- ============================================================
+local DX8 = {}
+DX8.__index = DX8
+
+local UI_NAME = "DX8UI"
+
+-- ============================================================
+-- DX8:CreateWindow(options)
+--   options.Name        : string  – judul window
+--   options.Community   : string  – URL / teks tombol community
+--   options.ToggleKey   : KeyCode – default RightControl
+-- ============================================================
+function DX8:CreateWindow(options)
+    options = options or {}
+    local titleText  = options.Name      or "DX8 Window"
+    local communityURL = options.Community or "https://projectreal.gg"
+    local toggleKey  = options.ToggleKey or Enum.KeyCode.RightControl
+
+    -- Hapus instance lama
+    local ok, hui = pcall(function() return gethui() end)
+    local guiParent = (ok and hui) or CoreGui
+
+    local old = guiParent:FindFirstChild(UI_NAME)
+    if old then old:Destroy() end
+    -- fallback CoreGui jika gethui sama dengan CoreGui
+    if guiParent ~= CoreGui then
+        local old2 = CoreGui:FindFirstChild(UI_NAME)
+        if old2 then old2:Destroy() end
+    end
+
+    -- ──────────────────────────────────────────────────────────
+    -- ROOT SCREENGUI
+    -- ──────────────────────────────────────────────────────────
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name          = UI_NAME
+    screenGui.ResetOnSpawn  = false
+    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    screenGui.Parent        = guiParent
+
+    -- ──────────────────────────────────────────────────────────
+    -- MAIN FRAME
+    -- ──────────────────────────────────────────────────────────
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name                 = "MainWindow"
+    mainFrame.Size                 = UDim2.new(0, 420, 0, 280)
+    mainFrame.Position             = UDim2.new(0.5, -210, 0.5, -140)
+    mainFrame.BackgroundColor3     = THEME.BgMain
+    mainFrame.BackgroundTransparency = 0.08
+    mainFrame.BorderSizePixel      = 0
+    mainFrame.Active               = true
+    mainFrame.ClipsDescendants     = true
+    mainFrame.Parent               = screenGui
+    MakeCorner(mainFrame, 6)
+
+    -- ──────────────────────────────────────────────────────────
+    -- TITLE BAR
+    -- ──────────────────────────────────────────────────────────
+    local titleBar = Instance.new("Frame")
+    titleBar.Name             = "TitleBar"
+    titleBar.Size             = UDim2.new(1, 0, 0, 35)
+    titleBar.BackgroundColor3 = THEME.Accent
+    titleBar.BorderSizePixel  = 0
+    titleBar.Parent           = mainFrame
+    MakeCorner(titleBar, 6)
+
+    -- Gradient pada titlebar
+    local titleGradient = Instance.new("UIGradient")
+    titleGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, THEME.Accent),
+        ColorSequenceKeypoint.new(1, THEME.AccentSoft),
+    })
+    titleGradient.Parent = titleBar
+
+    -- Patch sudut bawah titlebar (corner hanya berlaku di atas)
+    local titlePatch = Instance.new("Frame")
+    titlePatch.Size             = UDim2.new(1, 0, 0, 8)
+    titlePatch.Position         = UDim2.new(0, 0, 1, -8)
+    titlePatch.BackgroundColor3 = THEME.AccentSoft
+    titlePatch.BorderSizePixel  = 0
+    titlePatch.Parent           = titleBar
+
+    -- Teks judul
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Name              = "TitleLabel"
+    titleLabel.Size              = UDim2.new(1, -40, 1, 0)
+    titleLabel.Position          = UDim2.new(0, 10, 0, 0)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text              = titleText
+    titleLabel.TextColor3        = THEME.TextOnAccent
+    titleLabel.TextXAlignment    = Enum.TextXAlignment.Left
+    titleLabel.TextSize          = 14
+    titleLabel.Font              = Enum.Font.GothamBold
+    titleLabel.Parent            = titleBar
+
+    -- Tombol minimize  [—]
+    local minBtn = Instance.new("TextButton")
+    minBtn.Name             = "MinBtn"
+    minBtn.Size             = UDim2.new(0, 22, 0, 22)
+    minBtn.AnchorPoint      = Vector2.new(1, 0.5)
+    minBtn.Position         = UDim2.new(1, -6, 0.5, 0)
+    minBtn.BackgroundColor3 = THEME.BgPanelDark
+    minBtn.Text             = "—"
+    minBtn.TextColor3       = THEME.TextPrimary
+    minBtn.Font             = Enum.Font.GothamBold
+    minBtn.TextSize         = 14
+    minBtn.ZIndex           = 3
+    minBtn.AutoButtonColor  = false
+    minBtn.Modal            = false
+    minBtn.Parent           = titleBar
+    MakeCorner(minBtn, 4)
+
+    minBtn.MouseEnter:Connect(function()
+        Tween(minBtn, 0.15, {BackgroundColor3 = Color3.fromRGB(220, 80, 80), TextColor3 = Color3.fromRGB(255,255,255)})
+    end)
+    minBtn.MouseLeave:Connect(function()
+        Tween(minBtn, 0.15, {BackgroundColor3 = THEME.BgPanelDark, TextColor3 = THEME.TextPrimary})
+    end)
+
+    -- ──────────────────────────────────────────────────────────
+    -- MINI ICON (muncul saat diminimize)
+    -- ──────────────────────────────────────────────────────────
+    local miniIcon = Instance.new("TextButton")
+    miniIcon.Name             = "MiniIcon"
+    miniIcon.Size             = UDim2.new(0, 44, 0, 44)
+    miniIcon.Position         = UDim2.new(0, 20, 0, 20)
+    miniIcon.BackgroundColor3 = THEME.BgMain
+    miniIcon.Text             = "DX8"
+    miniIcon.TextColor3       = THEME.TextPrimary
+    miniIcon.Font             = Enum.Font.GothamBold
+    miniIcon.TextSize         = 12
+    miniIcon.Visible          = false
+    miniIcon.ZIndex           = 10
+    miniIcon.AutoButtonColor  = false
+    miniIcon.Parent           = screenGui
+    MakeCorner(miniIcon, 6)
+    MakeStroke(miniIcon, THEME.Border, 1, 0.5)
+
+    miniIcon.MouseEnter:Connect(function()
+        Tween(miniIcon, 0.15, {BackgroundColor3 = THEME.BgPanel})
+    end)
+    miniIcon.MouseLeave:Connect(function()
+        Tween(miniIcon, 0.15, {BackgroundColor3 = THEME.BgMain})
+    end)
+
+    -- ──────────────────────────────────────────────────────────
+    -- SIDEBAR TAB
+    -- ──────────────────────────────────────────────────────────
+    local sidebar = Instance.new("ScrollingFrame")
+    sidebar.Name                = "Sidebar"
+    sidebar.Size                = UDim2.new(0, 115, 1, -50)
+    sidebar.Position            = UDim2.new(0, 5, 0, 50)
+    sidebar.BackgroundTransparency = 1
+    sidebar.BorderSizePixel     = 0
+    sidebar.ScrollBarThickness  = 0
+    sidebar.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    sidebar.CanvasSize          = UDim2.new(0,0,0,0)
+    sidebar.Parent              = mainFrame
+
+    local sidebarPad = Instance.new("UIPadding")
+    sidebarPad.PaddingTop   = UDim.new(0, 6)
+    sidebarPad.PaddingLeft  = UDim.new(0, 2)
+    sidebarPad.PaddingRight = UDim.new(0, 2)
+    sidebarPad.Parent       = sidebar
+
+    local sidebarLayout = Instance.new("UIListLayout")
+    sidebarLayout.Padding      = UDim.new(0, 5)
+    sidebarLayout.SortOrder    = Enum.SortOrder.LayoutOrder
+    sidebarLayout.Parent       = sidebar
+
+    -- ──────────────────────────────────────────────────────────
+    -- INFO BAR (tab aktif + community btn)
+    -- ──────────────────────────────────────────────────────────
+    local infoBar = Instance.new("Frame")
+    infoBar.Name                = "InfoBar"
+    infoBar.Size                = UDim2.new(0, 285, 0, 25)
+    infoBar.Position            = UDim2.new(0, 130, 0, 45)
+    infoBar.BackgroundTransparency = 1
+    infoBar.Parent              = mainFrame
+
+    local activeTabLabel = Instance.new("TextLabel")
+    activeTabLabel.Name              = "ActiveTabLabel"
+    activeTabLabel.Size              = UDim2.new(1, -65, 1, 0)
+    activeTabLabel.BackgroundTransparency = 1
+    activeTabLabel.Text              = "—"
+    activeTabLabel.TextColor3        = THEME.TextMuted
+    activeTabLabel.Font              = Enum.Font.GothamBold
+    activeTabLabel.TextSize          = 11
+    activeTabLabel.TextXAlignment    = Enum.TextXAlignment.Left
+    activeTabLabel.Parent            = infoBar
+
+    local communityBtn = Instance.new("TextButton")
+    communityBtn.Name             = "CommunityBtn"
+    communityBtn.Size             = UDim2.new(0, 60, 0, 18)
+    communityBtn.AnchorPoint      = Vector2.new(1, 0.5)
+    communityBtn.Position         = UDim2.new(1, 0, 0.5, 0)
+    communityBtn.BackgroundColor3 = THEME.BgPanel
+    communityBtn.BackgroundTransparency = 0.4
+    communityBtn.Text             = "Community"
+    communityBtn.TextColor3       = THEME.TextPrimary
+    communityBtn.Font             = Enum.Font.GothamBold
+    communityBtn.TextSize         = 9
+    communityBtn.AutoButtonColor  = false
+    communityBtn.Parent           = infoBar
+    MakeCorner(communityBtn, 4)
+
+    communityBtn.MouseEnter:Connect(function()
+        Tween(communityBtn, 0.15, {BackgroundTransparency = 0.1, TextColor3 = THEME.Accent})
+    end)
+    communityBtn.MouseLeave:Connect(function()
+        Tween(communityBtn, 0.15, {BackgroundTransparency = 0.4, TextColor3 = THEME.TextPrimary})
+    end)
+    communityBtn.MouseButton1Click:Connect(function()
+        local orig = communityBtn.Text
+        if setclipboard then
+            setclipboard(communityURL)
+            communityBtn.Text = "Copied!"
+        else
+            communityBtn.Text = "See Chat"
+            print("[DX8] Community:", communityURL)
+        end
+        task.delay(2, function()
+            if communityBtn and communityBtn.Parent then
+                communityBtn.Text = orig
+            end
+        end)
+    end)
+
+    -- ──────────────────────────────────────────────────────────
+    -- MINIMIZE / RESTORE LOGIC
+    -- ──────────────────────────────────────────────────────────
+    local function showWindow()
+        mainFrame.Visible = true
+        miniIcon.Visible  = false
+        StartCursorBypass(mainFrame)
+    end
+
+    local function hideWindow()
+        mainFrame.Visible = false
+        miniIcon.Visible  = true
+        StopCursorBypass()
+    end
+
+    minBtn.MouseButton1Click:Connect(hideWindow)
+    miniIcon.MouseButton1Click:Connect(showWindow)
+
+    -- Drag mainframe (via titlebar agar tidak konflik dengan konten)
+    EnableDrag(titleBar, nil)
+    -- Drag miniIcon + tap untuk restore
+    EnableDrag(miniIcon, showWindow)
+
+    -- Keybind toggle
+    local keyConn = UserInputService.InputBegan:Connect(function(inp, gp)
+        if gp then return end
+        if inp.UserInputType == Enum.UserInputType.Keyboard
+        and inp.KeyCode == toggleKey then
+            if mainFrame.Visible then hideWindow() else showWindow() end
+        end
+    end)
+
+    screenGui.Destroying:Connect(function()
+        pcall(StopCursorBypass)
+        keyConn:Disconnect()
+    end)
+
+    StartCursorBypass(mainFrame)
+
+    -- ──────────────────────────────────────────────────────────
+    -- WINDOW OBJECT
+    -- ──────────────────────────────────────────────────────────
+    local windowObj    = {}
+    windowObj._screen  = screenGui
+    windowObj._main    = mainFrame
+    windowObj._sidebar = sidebar
+    windowObj._tabLabel = activeTabLabel
+    windowObj._tabs    = {}   -- { container, tabBtn }
+    windowObj._activeContainer = nil
+
+    -- Destroy window
+    function windowObj:Destroy()
+        pcall(StopCursorBypass)
+        pcall(function() screenGui:Destroy() end)
+    end
+
+    -- ──────────────────────────────────────────────────────────
+    -- windowObj:CreateTab(name, icon)
+    --   icon: key dari ICONS atau rbxasset URL langsung
+    -- ──────────────────────────────────────────────────────────
+    function windowObj:CreateTab(tabName, iconKey)
+        local self2 = self
+
+        -- ── Sidebar button ────────────────────────────────────
+        local tabBtn = Instance.new("TextButton")
+        tabBtn.Name             = tabName .. "_TabBtn"
+        tabBtn.Size             = UDim2.new(1, 0, 0, 26)
+        tabBtn.BackgroundColor3 = THEME.BgPanelDark
+        tabBtn.BackgroundTransparency = 1
+        tabBtn.Text             = ""
+        tabBtn.AutoButtonColor  = false
+        tabBtn.Parent           = sidebar
+
+        MakeCorner(tabBtn, 4)
+
+        local tabStroke = MakeStroke(tabBtn, THEME.AccentSoft, 0.8, 1)
+
+        -- Indicator garis kiri
+        local indicator = Instance.new("Frame")
+        indicator.Name             = "Indicator"
+        indicator.Size             = UDim2.new(0, 3, 0, 0)
+        indicator.AnchorPoint      = Vector2.new(0, 0.5)
+        indicator.Position         = UDim2.new(0, 4, 0.5, 0)
+        indicator.BackgroundColor3 = THEME.Accent
+        indicator.BorderSizePixel  = 0
+        indicator.Visible          = false
+        indicator.Parent           = tabBtn
+        MakeCorner(indicator, 2)
+
+        -- Icon
+        local iconImg = Instance.new("ImageLabel")
+        iconImg.Size               = UDim2.new(0, 14, 0, 14)
+        iconImg.AnchorPoint        = Vector2.new(0, 0.5)
+        iconImg.Position           = UDim2.new(0, 14, 0.5, 0)
+        iconImg.BackgroundTransparency = 1
+        iconImg.Image              = ICONS[iconKey] or iconKey or ICONS.Favorite
+        iconImg.ImageColor3        = THEME.TextDim
+        iconImg.Parent             = tabBtn
+
+        -- Label
+        local tabLabel = Instance.new("TextLabel")
+        tabLabel.Size              = UDim2.new(1, -36, 1, 0)
+        tabLabel.Position          = UDim2.new(0, 34, 0, 0)
+        tabLabel.BackgroundTransparency = 1
+        tabLabel.Text              = tabName
+        tabLabel.TextColor3        = THEME.TextDim
+        tabLabel.Font              = Enum.Font.GothamBold
+        tabLabel.TextSize          = 11
+        tabLabel.TextXAlignment    = Enum.TextXAlignment.Left
+        tabLabel.TextYAlignment    = Enum.TextYAlignment.Center
+        tabLabel.Parent            = tabBtn
+
+        -- ── Content container ─────────────────────────────────
+        local container = Instance.new("ScrollingFrame")
+        container.Name                = tabName .. "_Container"
+        container.Size                = UDim2.new(0, 285, 1, -80)
+        container.Position            = UDim2.new(0, 130, 0, 75)
+        container.BackgroundTransparency = 1
+        container.BorderSizePixel     = 0
+        container.ScrollBarThickness  = 3
+        container.ScrollBarImageColor3 = THEME.AccentSoft
+        container.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        container.CanvasSize          = UDim2.new(0,0,0,0)
+        container.Visible             = false
+        container.ClipsDescendants    = true
+        container.Parent              = mainFrame
+
+        local contLayout = Instance.new("UIListLayout")
+        contLayout.Padding            = UDim.new(0, 8)
+        contLayout.SortOrder          = Enum.SortOrder.LayoutOrder
+        contLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+        contLayout.Parent             = container
+
+        local contPad = Instance.new("UIPadding")
+        contPad.PaddingTop    = UDim.new(0, 6)
+        contPad.PaddingBottom = UDim.new(0, 6)
+        contPad.PaddingLeft   = UDim.new(0, 6)
+        contPad.PaddingRight  = UDim.new(0, 6)
+        contPad.Parent        = container
+
+        table.insert(self2._tabs, { container = container, btn = tabBtn,
+            label = tabLabel, icon = iconImg,
+            stroke = tabStroke, indicator = indicator })
+
+        -- ── Fungsi switch ke tab ini ──────────────────────────
+        local function activate()
+            -- Nonaktifkan semua
+            for _, t in ipairs(self2._tabs) do
+                t.container.Visible = false
+                t.btn.BackgroundTransparency = 1
+                t.label.TextColor3   = THEME.TextDim
+                t.icon.ImageColor3   = THEME.TextDim
+                t.stroke.Transparency = 1
+                t.indicator.Visible  = false
+                t.indicator.Size     = UDim2.new(0, 3, 0, 0)
+            end
+
+            -- Aktifkan tab ini dengan animasi
+            container.Position = UDim2.new(0, 130, 0, 85) -- mulai sedikit bawah
+            container.Visible  = true
+            Tween(container, 0.22, { Position = UDim2.new(0, 130, 0, 75) })
+
+            tabBtn.BackgroundTransparency = 0.75
+            tabBtn.BackgroundColor3       = THEME.BgPanelDark
+            tabLabel.TextColor3           = THEME.TextPrimary
+            iconImg.ImageColor3           = THEME.Accent
+            tabStroke.Transparency        = 0
+
+            indicator.Visible = true
+            Tween(indicator, 0.2, { Size = UDim2.new(0, 3, 0, 16) })
+
+            activeTabLabel.Text = tabName
+            self2._activeContainer = container
+        end
+
+        tabBtn.MouseButton1Click:Connect(activate)
+
+        tabBtn.MouseEnter:Connect(function()
+            if container.Visible then return end
+            Tween(tabLabel, 0.15, { TextColor3 = THEME.TextMuted })
+            Tween(iconImg,  0.15, { ImageColor3 = THEME.TextMuted })
+        end)
+        tabBtn.MouseLeave:Connect(function()
+            if container.Visible then return end
+            Tween(tabLabel, 0.15, { TextColor3 = THEME.TextDim })
+            Tween(iconImg,  0.15, { ImageColor3 = THEME.TextDim })
+        end)
+
+        -- Jika ini tab pertama, langsung aktifkan
+        if #self2._tabs == 1 then
+            activate()
+        end
+
+        -- ── TAB OBJECT ────────────────────────────────────────
+        local tabObj = {}
+        tabObj._container = container
+        tabObj.Select     = activate   -- windowObj:CreateTab():Select()
+
+        -- ────────────────────────────────────────────────────
+        -- tabObj:AddSection(name)  →  sectionObj
+        -- ────────────────────────────────────────────────────
+        function tabObj:AddSection(sectionName)
+            local secFrame = Instance.new("Frame")
+            secFrame.Name              = (sectionName or "Section") .. "_Frame"
+            secFrame.Size              = UDim2.new(1, 0, 0, 0)
+            secFrame.AutomaticSize     = Enum.AutomaticSize.Y
+            secFrame.BackgroundColor3  = THEME.BgPanel
+            secFrame.BackgroundTransparency = 0.35
+            secFrame.BorderSizePixel   = 0
+            secFrame.Parent            = container
+            MakeCorner(secFrame, 5)
+
+            local secLayout = Instance.new("UIListLayout")
+            secLayout.Padding           = UDim.new(0, 5)
+            secLayout.SortOrder         = Enum.SortOrder.LayoutOrder
+            secLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+            secLayout.Parent            = secFrame
+
+            local secPad = Instance.new("UIPadding")
+            secPad.PaddingTop    = UDim.new(0, 7)
+            secPad.PaddingBottom = UDim.new(0, 7)
+            secPad.PaddingLeft   = UDim.new(0, 7)
+            secPad.PaddingRight  = UDim.new(0, 7)
+            secPad.Parent        = secFrame
+
+            -- Judul section (opsional)
+            if sectionName and sectionName ~= "" then
+                local secTitle = Instance.new("TextLabel")
+                secTitle.Size              = UDim2.new(1, 0, 0, 14)
+                secTitle.BackgroundTransparency = 1
+                secTitle.Text              = string.upper(sectionName)
+                secTitle.TextColor3        = THEME.Accent
+                secTitle.Font              = Enum.Font.GothamBold
+                secTitle.TextSize          = 9
+                secTitle.TextXAlignment    = Enum.TextXAlignment.Left
+                secTitle.LayoutOrder       = 0
+                secTitle.Parent            = secFrame
+            end
+
+            local sectionObj = {}
+            sectionObj._frame = secFrame
+
+            -- ────────────────────────────────────────────────
+            -- sectionObj:AddLabel(text)
+            -- ────────────────────────────────────────────────
+            function sectionObj:AddLabel(text)
+                local lbl = Instance.new("TextLabel")
+                lbl.Size              = UDim2.new(1, 0, 0, 20)
+                lbl.BackgroundTransparency = 1
+                lbl.Text              = text or ""
+                lbl.TextColor3        = THEME.TextMuted
+                lbl.Font              = Enum.Font.Gotham
+                lbl.TextSize          = 11
+                lbl.TextXAlignment    = Enum.TextXAlignment.Left
+                lbl.TextWrapped       = true
+                lbl.AutomaticSize     = Enum.AutomaticSize.Y
+                lbl.Parent            = secFrame
+
+                local lblObj = {}
+                function lblObj:Set(newText) lbl.Text = newText end
+                return lblObj
+            end
+
+            -- ────────────────────────────────────────────────
+            -- sectionObj:AddSeparator()
+            -- ────────────────────────────────────────────────
+            function sectionObj:AddSeparator()
+                local sep = Instance.new("Frame")
+                sep.Size             = UDim2.new(1, 0, 0, 1)
+                sep.BackgroundColor3 = THEME.Border
+                sep.BorderSizePixel  = 0
+                sep.Parent           = secFrame
+            end
+
+            -- ────────────────────────────────────────────────
+            -- sectionObj:AddButton(name, callback)
+            -- ────────────────────────────────────────────────
+            function sectionObj:AddButton(name, callback)
+                local wrap = Instance.new("Frame")
+                wrap.Size             = UDim2.new(1, 0, 0, 28)
+                wrap.BackgroundColor3 = THEME.BgPanelDark
+                wrap.BorderSizePixel  = 0
+                wrap.Parent           = secFrame
+                MakeCorner(wrap, 4)
+
+                local btn = Instance.new("TextButton")
+                btn.Size              = UDim2.new(1, 0, 1, 0)
+                btn.BackgroundTransparency = 1
+                btn.Text              = name or "Button"
+                btn.TextColor3        = THEME.TextPrimary
+                btn.Font              = Enum.Font.GothamBold
+                btn.TextSize          = 11
+                btn.AutoButtonColor   = false
+                btn.Parent            = wrap
+
+                btn.MouseEnter:Connect(function()
+                    Tween(wrap, 0.15, { BackgroundColor3 = THEME.BgPanel })
+                end)
+                btn.MouseLeave:Connect(function()
+                    Tween(wrap, 0.15, { BackgroundColor3 = THEME.BgPanelDark })
+                end)
+                btn.MouseButton1Click:Connect(function()
+                    -- Flash animasi klik
+                    Tween(wrap, 0.08, { BackgroundColor3 = THEME.Border })
+                    task.delay(0.12, function()
+                        if wrap and wrap.Parent then
+                            Tween(wrap, 0.1, { BackgroundColor3 = THEME.BgPanelDark })
+                        end
+                    end)
+                    if callback then task.spawn(callback) end
+                end)
+
+                local btnObj = {}
+                function btnObj:SetText(t) btn.Text = t end
+                function btnObj:SetCallback(fn) callback = fn end
+                return btnObj
+            end
+
+            -- ────────────────────────────────────────────────
+            -- sectionObj:AddToggle(name, default, callback)
+            --   callback(state: boolean)
+            -- ────────────────────────────────────────────────
+            function sectionObj:AddToggle(name, default, callback)
+                local state = default == true
+
+                local wrap = Instance.new("Frame")
+                wrap.Size             = UDim2.new(1, 0, 0, 28)
+                wrap.BackgroundColor3 = THEME.BgPanelDark
+                wrap.BorderSizePixel  = 0
+                wrap.Parent           = secFrame
+                MakeCorner(wrap, 4)
+
+                local lbl = Instance.new("TextLabel")
+                lbl.Size              = UDim2.new(1, -46, 1, 0)
+                lbl.Position          = UDim2.new(0, 8, 0, 0)
+                lbl.BackgroundTransparency = 1
+                lbl.Text              = name or "Toggle"
+                lbl.TextColor3        = THEME.TextPrimary
+                lbl.Font              = Enum.Font.GothamBold
+                lbl.TextSize          = 11
+                lbl.TextXAlignment    = Enum.TextXAlignment.Left
+                lbl.Parent            = wrap
+
+                -- Knob track
+                local track = Instance.new("Frame")
+                track.Size            = UDim2.new(0, 30, 0, 16)
+                track.AnchorPoint     = Vector2.new(1, 0.5)
+                track.Position        = UDim2.new(1, -8, 0.5, 0)
+                track.BackgroundColor3 = THEME.Border
+                track.BorderSizePixel = 0
+                track.Parent          = wrap
+                MakeCorner(track, 10)
+
+                local knob = Instance.new("Frame")
+                knob.Size             = UDim2.new(0, 12, 0, 12)
+                knob.AnchorPoint      = Vector2.new(0, 0.5)
+                knob.Position         = UDim2.new(0, 2, 0.5, 0)
+                knob.BackgroundColor3 = THEME.TextPrimary
+                knob.BorderSizePixel  = 0
+                knob.Parent           = track
+                MakeCorner(knob, 10)
+
+                local function updateVisual()
+                    if state then
+                        Tween(track, 0.18, { BackgroundColor3 = THEME.Accent })
+                        Tween(knob,  0.18, { Position = UDim2.new(0, 16, 0.5, 0) })
+                    else
+                        Tween(track, 0.18, { BackgroundColor3 = THEME.Border })
+                        Tween(knob,  0.18, { Position = UDim2.new(0, 2,  0.5, 0) })
+                    end
+                end
+                updateVisual()
+
+                -- Klik seluruh area wrap
+                local clickArea = Instance.new("TextButton")
+                clickArea.Size             = UDim2.new(1, 0, 1, 0)
+                clickArea.BackgroundTransparency = 1
+                clickArea.Text             = ""
+                clickArea.ZIndex           = 2
+                clickArea.AutoButtonColor  = false
+                clickArea.Parent           = wrap
+
+                clickArea.MouseButton1Click:Connect(function()
+                    state = not state
+                    updateVisual()
+                    if callback then task.spawn(callback, state) end
+                end)
+
+                wrap.MouseEnter:Connect(function()
+                    Tween(wrap, 0.15, { BackgroundColor3 = THEME.BgPanel })
+                end)
+                wrap.MouseLeave:Connect(function()
+                    Tween(wrap, 0.15, { BackgroundColor3 = THEME.BgPanelDark })
+                end)
+
+                local togObj = {}
+                function togObj:Set(val)
+                    state = val == true
+                    updateVisual()
+                end
+                function togObj:Get() return state end
+                return togObj
+            end
+
+            -- ────────────────────────────────────────────────
+            -- sectionObj:AddKeybind(name, default, callback)
+            --   callback(KeyCode)
+            -- ────────────────────────────────────────────────
+            function sectionObj:AddKeybind(name, defaultKey, callback)
+                local currentKey = defaultKey or Enum.KeyCode.Unknown
+                local listening  = false
+
+                local wrap = Instance.new("Frame")
+                wrap.Size             = UDim2.new(1, 0, 0, 28)
+                wrap.BackgroundColor3 = THEME.BgPanelDark
+                wrap.BorderSizePixel  = 0
+                wrap.Parent           = secFrame
+                MakeCorner(wrap, 4)
+
+                local lbl = Instance.new("TextLabel")
+                lbl.Size              = UDim2.new(1, -70, 1, 0)
+                lbl.Position          = UDim2.new(0, 8, 0, 0)
+                lbl.BackgroundTransparency = 1
+                lbl.Text              = name or "Keybind"
+                lbl.TextColor3        = THEME.TextPrimary
+                lbl.Font              = Enum.Font.GothamBold
+                lbl.TextSize          = 11
+                lbl.TextXAlignment    = Enum.TextXAlignment.Left
+                lbl.Parent            = wrap
+
+                local keyBtn = Instance.new("TextButton")
+                keyBtn.Size             = UDim2.new(0, 60, 0, 20)
+                keyBtn.AnchorPoint      = Vector2.new(1, 0.5)
+                keyBtn.Position         = UDim2.new(1, -6, 0.5, 0)
+                keyBtn.BackgroundColor3 = THEME.BgMain
+                keyBtn.Text             = currentKey.Name
+                keyBtn.TextColor3       = THEME.Accent
+                keyBtn.Font             = Enum.Font.GothamBold
+                keyBtn.TextSize         = 10
+                keyBtn.AutoButtonColor  = false
+                keyBtn.Parent           = wrap
+                MakeCorner(keyBtn, 3)
+
+                local function setListening(val)
+                    listening = val
+                    if val then
+                        keyBtn.Text       = "..."
+                        keyBtn.TextColor3 = THEME.TextMuted
+                        Tween(keyBtn, 0.1, { BackgroundColor3 = THEME.BgPanel })
+                    else
+                        keyBtn.Text       = currentKey.Name
+                        keyBtn.TextColor3 = THEME.Accent
+                        Tween(keyBtn, 0.1, { BackgroundColor3 = THEME.BgMain })
+                    end
+                end
+
+                keyBtn.MouseButton1Click:Connect(function()
+                    setListening(not listening)
+                end)
+
+                UserInputService.InputBegan:Connect(function(inp, gp)
+                    if not listening then return end
+                    if inp.UserInputType ~= Enum.UserInputType.Keyboard then return end
+                    currentKey = inp.KeyCode
+                    setListening(false)
+                    if callback then task.spawn(callback, currentKey) end
+                end)
+
+                local kbObj = {}
+                function kbObj:Get() return currentKey end
+                function kbObj:Set(kc)
+                    currentKey = kc
+                    keyBtn.Text = kc.Name
+                end
+                return kbObj
+            end
+
+            return sectionObj
+        end -- AddSection
+
+        return tabObj
+    end -- CreateTab
+
+    return windowObj
+end -- CreateWindow
+
+return DX8
